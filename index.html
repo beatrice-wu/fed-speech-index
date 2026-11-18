@@ -48,6 +48,8 @@ textarea{width:100%;min-height:220px;resize:vertical;font:13.5px/1.5 var(--mono)
 .seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
 .chartbox{position:relative;height:380px}
 .chartbox.sm{height:300px}
+.chartscroll{overflow-x:auto}
+#agree{margin-top:14px}
 .stats{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:8px}
 .stats b{color:var(--ink);font-family:var(--mono);font-weight:500}
 button.primary{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:9px 16px;font:600 14px var(--body);cursor:pointer}
@@ -121,6 +123,13 @@ a{color:var(--accent)}
     <p class="sub">No smoothing. Dots: each speech’s score. Bars: the chosen market’s change from the previous close to the close on the day of the speech (basis points for the yield, % for the others).</p>
     <div class="chartbox sm"><canvas id="c2" aria-label="Speech scores and same-day market moves"></canvas></div>
   </div>
+  <div class="panel" id="cmp-panel">
+    <h2>Side by side: speech text vs headlines vs market</h2>
+    <p class="sub">Three separate reads of the same speeches, each on the −10 to +10 scale. <b>Text</b>: the score from the speech alone. <b>Headlines</b>: how the press framed it. <b>Market</b>: the 2-year yield, dollar and S&amp;P 500 futures in the hour around the speech. Only speeches with a text score are shown; the period follows the selector above.</p>
+    <div class="controls"><label>View<span class="seg" id="cview"><button type="button" data-k="each" aria-pressed="true">Each speech</button><button type="button" data-k="avg" aria-pressed="false">Moving average</button></span></label></div>
+    <div class="chartscroll"><div class="chartbox" id="c3box"><canvas id="c3" aria-label="Text, headline and market scores for each speech"></canvas></div></div>
+    <div class="tablewrap"><table id="agree"><thead><tr><th>Pair</th><th style="text-align:right">Speeches</th><th style="text-align:right">Same direction</th><th style="text-align:right">Correlation</th><th style="text-align:right">Average gap</th></tr></thead><tbody></tbody></table></div>
+  </div>
   <div class="panel" id="bench-panel">
     <h2>Benchmarks: does the text score agree with headlines and markets?</h2>
     <p class="sub">Each row compares the speech-text score with an independent check. “Same direction” counts speeches where both are non-zero and point the same way (for stocks, falling counts as hawkish). With fewer than about 100 speeches, correlations below about 0.2 are within noise.</p>
@@ -172,8 +181,8 @@ a{color:var(--accent)}
     </div>
     <div class="tablewrap"><table id="tbl"><thead><tr>
       <th data-s="date">Date</th><th data-s="speaker">Speaker</th><th>Title</th>
-      <th data-s="text" style="text-align:right">Text (index)</th><th data-s="final" style="text-align:right">Combined</th>
-      <th data-s="news" style="text-align:right">News</th><th data-s="market" style="text-align:right">Market</th></tr></thead><tbody></tbody></table></div>
+      <th data-s="text" style="text-align:right">Text</th><th data-s="news" style="text-align:right">Headlines</th>
+      <th data-s="market" style="text-align:right">Market</th><th data-s="final" style="text-align:right">Combined</th></tr></thead><tbody></tbody></table></div>
     <p class="note"><span id="tblnote"></span> <button class="ghost" id="dl" type="button">Download my scores (CSV)</button></p>
   </div>
 </section>
@@ -255,8 +264,8 @@ function allSpeeches(){
 const BASIS={basis:"text"};
 const val = s => BASIS.basis==="text" ? s.text : s.final;
 const scored = () => allSpeeches().filter(s => val(s)!=null);
-function hawkSeries(win){
-  const sp = scored().map(x=>({t:ts(x.date),v:val(x)})).sort((a,b)=>a.t-b.t), t0=sp[0].t, t1=Math.max(lastMk, sp[sp.length-1].t);
+function hawkSeries(win,f){ f=f||val;
+  const sp = allSpeeches().filter(x=>f(x)!=null).map(x=>({t:ts(x.date),v:f(x)})).sort((a,b)=>a.t-b.t), t0=sp[0].t, t1=Math.max(lastMk, sp[sp.length-1].t);
   const out=[]; let hi=0,lo=0,sum=0;
   for(let t=t0;t<=t1;t+=DAY){ while(hi<sp.length&&sp[hi].t<=t){sum+=sp[hi].v;hi++;} while(lo<hi&&sp[lo].t<=t-win*DAY){sum-=sp[lo].v;lo++;} const n=hi-lo; out.push({t,v:n?sum/n:null,n}); }
   return out;
@@ -307,6 +316,40 @@ function drawIndex(){
       scales:{x:axisDate(hs[0].t-3*DAY,lastMk+3*DAY),y:{min:-10,max:10,ticks:{color:css("--muted")},grid:{color:css("--line")},title:{display:true,text:"Score",color:css("--muted")}},
         y1:{position:"right",ticks:{color:css("--muted")},grid:{display:false},title:{display:true,text:`Change on the day (${A.move})`,color:css("--muted")}}}}};
   if(c2) c2.destroy(); c2 = new Chart(document.getElementById("c2"), cfg2);
+  drawCompare();
+}
+let c3=null; const CMP={view:"each"};
+const CMPS=[["Text",s=>s.text,"--accent"],["Headlines",s=>s.news,"--warn"],["Market",s=>s.market,"--ok"]];
+function drawCompare(){
+  if(!window.Chart) return;
+  const cut = state.rng==="all" ? -Infinity : lastMk - (+state.rng)*DAY;
+  const sp = allSpeeches().filter(s=>s.text!=null&&ts(s.date)>=cut);
+  const box=document.getElementById("c3box"); let cfg;
+  if(!sp.length){ if(c3){c3.destroy();c3=null;} return; }
+  if(CMP.view==="each"){
+    box.style.minWidth = (sp.length*30)+"px";
+    const lab = sp.map(s=>[new Date(ts(s.date)).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"2-digit",timeZone:"UTC"}), s.speaker.replace("Pro Tempore ","").split(" ").pop()]);
+    cfg={type:"bar",data:{labels:lab,datasets:CMPS.map(([n,f,c])=>({label:n,data:sp.map(f),backgroundColor:css(c),borderWidth:0,categoryPercentage:.8,barPercentage:.9}))},
+      options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:"index",intersect:false},
+        plugins:{legend:{labels:{color:css("--ink"),boxWidth:14}},tooltip:{callbacks:{title:i=>{const s=sp[i[0].dataIndex];return `${s.speaker}, ${fdate(s.date)}`;},afterTitle:i=>sp[i[0].dataIndex].title,label:c=>`${c.dataset.label}: ${c.parsed.y==null?"not available":fmt(c.parsed.y)}`}}},
+        scales:{x:{ticks:{color:css("--muted"),autoSkip:false,maxRotation:90,minRotation:90,font:{size:10}},grid:{display:false}},
+          y:{min:-10,max:10,ticks:{color:css("--muted")},grid:{color:css("--line")},title:{display:true,text:"Score (−10 dovish, +10 hawkish)",color:css("--muted")}}}}};
+  } else {
+    box.style.minWidth="0";
+    const t0=ts(sp[0].date);
+    cfg={type:"line",data:{datasets:CMPS.map(([n,f,c])=>({label:`${n}, ${state.win}-day average`,data:hawkSeries(state.win,s=>s.text!=null?f(s):null).filter(p=>p.v!=null&&p.t>=t0).map(p=>({x:p.t,y:p.v})),borderColor:css(c),backgroundColor:css(c),borderWidth:2.2,pointRadius:0}))},
+      options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:"nearest",axis:"x",intersect:false},
+        plugins:{legend:{labels:{color:css("--ink"),boxWidth:14}},tooltip:{callbacks:{title:i=>i.length?fdate(iso(i[0].parsed.x)):"",label:c=>`${c.dataset.label}: ${fmt(c.parsed.y)}`}}},
+        scales:{x:axisDate(t0,lastMk),y:{min:-10,max:10,ticks:{color:css("--muted")},grid:{color:css("--line")},title:{display:true,text:"Score (−10 dovish, +10 hawkish)",color:css("--muted")}}}}};
+  }
+  if(c3) c3.destroy(); c3=new Chart(document.getElementById("c3"),cfg);
+  const pairs=[[0,1],[0,2],[1,2]];
+  document.querySelector("#agree tbody").innerHTML = pairs.map(([a,b])=>{
+    const pr=sp.map(s=>[CMPS[a][1](s),CMPS[b][1](s)]).filter(([x,y])=>x!=null&&y!=null);
+    const nz=pr.filter(([x,y])=>x!==0&&y!==0), same=nz.length?nz.filter(([x,y])=>Math.sign(x)===Math.sign(y)).length/nz.length:NaN;
+    const c=corr(pr), gap=pr.length?pr.reduce((t,[x,y])=>t+x-y,0)/pr.length:NaN;
+    return `<tr><td>${CMPS[a][0]} vs ${CMPS[b][0].toLowerCase()}</td><td class="num">${pr.length}</td><td class="num">${isNaN(same)?"–":Math.round(same*100)+"%"}</td><td class="num">${isNaN(c)?"–":c.toFixed(2)}</td><td class="num">${isNaN(gap)?"–":(gap>0?"+":"")+gap.toFixed(1)}</td></tr>`;
+  }).join("") + `<tr><td colspan="5" class="note">Average gap = first score minus second, averaged over the speeches with both (positive means the first reads more hawkish). Same direction counts speeches where both are non-zero.</td></tr>`;
 }
 function benchmarks(){
   const sp=allSpeeches().filter(s=>s.text!=null).sort((a,b)=>a.date<b.date?-1:1);
@@ -339,7 +382,7 @@ function table(){
   tb.innerHTML = rows.map((s,i)=>{
     const key=s.date+"|"+s.title; const open = openRow===key;
     const title = s.url?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a>`:esc(s.title);
-    return `<tr class="row" data-key="${esc(key)}"><td style="white-space:nowrap">${fdate(s.date)}</td><td>${esc(s.speaker)}<div class="note">${esc(s.inst||"")}</div></td><td>${title}${s.src==="added"?'<span class="tag">Added here</span>':""}${s.final==null?'<span class="tag">Not about monetary policy</span>':""}</td>${cell(s.text)}${cell(s.final)}${cell(s.news)}${cell(s.market)}</tr>`+
+    return `<tr class="row" data-key="${esc(key)}"><td style="white-space:nowrap">${fdate(s.date)}</td><td>${esc(s.speaker)}<div class="note">${esc(s.inst||"")}</div></td><td>${title}${s.src==="added"?'<span class="tag">Added here</span>':""}${s.final==null?'<span class="tag">Not about monetary policy</span>':""}</td>${cell(s.text)}${cell(s.news)}${cell(s.market)}${cell(s.final)}</tr>`+
       (open?`<tr class="det"><td colspan="7">${s.path?`<div><b>Expected path:</b> ${esc(s.path)}</div>`:""}${s.reason?`<div><b>Why:</b> ${esc(s.reason)}</div>`:""}${s.quote?`<blockquote>${esc(s.quote)}</blockquote>`:""}${s.moves?`<div class="note">Market window: ${esc(s.moves)}</div>`:""}${s.absolute!=null?`<div class="note">Absolute stance (ignoring expectations): ${fmt(s.absolute,0)}</div>`:""}${s.src==="added"&&db?`<button class="ghost" data-del="${esc(s.id)}" type="button">Remove from index</button>`:""}</td></tr>`:"");
   }).join("");
   document.getElementById("tblnote").textContent = `${rows.length} shown.`;
@@ -486,6 +529,7 @@ document.querySelectorAll("#mline button").forEach(b=>b.addEventListener("click"
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>route());
 new MutationObserver(()=>route()).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
 
+document.querySelectorAll("#cview button").forEach(b=>b.addEventListener("click",()=>{CMP.view=b.dataset.k;document.querySelectorAll("#cview button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCompare();}));
 /* ---------- start ---------- */
 document.getElementById("mkend").textContent = fdate(iso(lastMk));
 const SRC=D.markets.sources||{}; ["y2","dxy","spx"].forEach(k=>document.getElementById("src-"+k).textContent=SRC[k]||"see repository");
