@@ -102,13 +102,14 @@ a{color:var(--accent)}
 <section class="view" id="v-index">
   <div class="panel">
     <h2>Hawkishness index against markets</h2>
-    <p class="sub">The red line averages the scores of all Fed speeches given in the previous 30 days; dots are single speeches. The market line is the daily close or its 30-day average.</p>
+    <p class="sub">The red line averages the text scores of all Fed speeches given in the previous 30 days; dots are single speeches. Headlines and market reactions are not in the index: they are the benchmarks below. The market line is the daily close or its 30-day average.</p>
     <div class="controls">
       <label for="asset">Market<select id="asset">
         <option value="y2">US 2-year Treasury yield (%)</option>
         <option value="dxy">US dollar index (DXY)</option>
         <option value="spx">S&amp;P 500</option></select></label>
       <label>Market line<span class="seg" id="mline"><button type="button" data-k="raw" aria-pressed="true">Daily close</button><button type="button" data-k="ma" aria-pressed="false">30-day average</button></span></label>
+      <label>Index based on<span class="seg" id="basis"><button type="button" data-k="text" aria-pressed="true">Speech text only</button><button type="button" data-k="final" aria-pressed="false">Text + headlines + market</button></span></label>
       <label for="win">Hawkishness window<select id="win"><option value="14">14 days</option><option value="30" selected>30 days</option><option value="60">60 days</option></select></label>
       <label for="rng">Period<select id="rng"><option value="all" selected>All</option><option value="1825">Last 5 years</option><option value="365">Last 12 months</option><option value="180">Last 6 months</option><option value="90">Last 3 months</option></select></label>
     </div>
@@ -119,6 +120,11 @@ a{color:var(--accent)}
     <h2>Each speech and the market move that day</h2>
     <p class="sub">No smoothing. Dots: each speech’s score. Bars: the chosen market’s change from the previous close to the close on the day of the speech (basis points for the yield, % for the others).</p>
     <div class="chartbox sm"><canvas id="c2" aria-label="Speech scores and same-day market moves"></canvas></div>
+  </div>
+  <div class="panel" id="bench-panel">
+    <h2>Benchmarks: does the text score agree with headlines and markets?</h2>
+    <p class="sub">Each row compares the speech-text score with an independent check. “Same direction” counts speeches where both are non-zero and point the same way (for stocks, falling counts as hawkish). With fewer than about 100 speeches, correlations below about 0.2 are within noise.</p>
+    <div class="tablewrap"><table id="bench"><thead><tr><th>Benchmark</th><th style="text-align:right">Speeches</th><th style="text-align:right">Same direction</th><th style="text-align:right">Correlation</th></tr></thead><tbody></tbody></table></div>
   </div>
 </section>
 
@@ -166,7 +172,7 @@ a{color:var(--accent)}
     </div>
     <div class="tablewrap"><table id="tbl"><thead><tr>
       <th data-s="date">Date</th><th data-s="speaker">Speaker</th><th>Title</th>
-      <th data-s="final" style="text-align:right">Final</th><th data-s="text" style="text-align:right">Text</th>
+      <th data-s="text" style="text-align:right">Text (index)</th><th data-s="final" style="text-align:right">Combined</th>
       <th data-s="news" style="text-align:right">News</th><th data-s="market" style="text-align:right">Market</th></tr></thead><tbody></tbody></table></div>
     <p class="note"><span id="tblnote"></span> <button class="ghost" id="dl" type="button">Download my scores (CSV)</button></p>
   </div>
@@ -178,10 +184,11 @@ a{color:var(--accent)}
     <h3>The scale</h3>
     <p>Each speech is scored relative to the policy path the FOMC and markets already expect. An official who simply restates that path scores 0, even when the path involves hikes or cuts. +4 leans tighter (stresses upside inflation risk), +7 clearly wants more or earlier hikes than expected, +10 calls for a sharply tighter path; the negative side mirrors this. A separate “absolute stance” ignores expectations.</p>
     <h3>Speeches in the index (<span id="cnt"></span>)</h3>
+    <p>The index uses the <b>speech text only</b>. Headlines and market reactions are scored separately and used as benchmarks (Index tab). The older combined score (text 40%, headlines 30%, market 30%) can still be shown with the “Index based on” switch.</p>
     <ul>
-      <li><b>Text (40%)</b>: an AI reading of the speech against the scale, then a calibration pass that compares speeches side by side so similar views get similar scores.</li>
-      <li><b>News (30%)</b>: how Google News headlines naming the official framed the remarks, from the day before to two days after.</li>
-      <li><b>Market (30%)</b>: moves in 2-year Treasury note futures (weight 0.5), the dollar index (0.3) and S&amp;P 500 futures (0.2) from 10 minutes before to 60 minutes after the speech, divided by normal moves of that length over the previous 20 days and mapped to the scale. Daily moves count half when the time is unknown.</li>
+      <li><b>Text</b>: an AI reading of the speech against the scale, then a calibration pass that compares speeches side by side so similar views get similar scores.</li>
+      <li><b>Headlines (benchmark)</b>: how Google News headlines naming the official framed the remarks, from the day before to two days after.</li>
+      <li><b>Market reaction (benchmark)</b>: moves in 2-year Treasury note futures (weight 0.5), the dollar index (0.3) and S&amp;P 500 futures (0.2) from 10 minutes before to 60 minutes after the speech, divided by normal moves of that length over the previous 20 days and mapped to the scale. Daily moves count half when the time is unknown.</li>
     </ul>
     <p>Sources: Federal Reserve Board speech, testimony and press-conference pages; regional Fed speech pages; Google News; Yahoo Finance prices. Built and updated by the fedspeak pipeline (GitHub Actions). Data last updated: <span id="built"></span>.</p>
     <h3>Speeches scored on this page</h3>
@@ -245,9 +252,11 @@ function allSpeeches(){
     absolute:a.absolute, conf:"Text only", reason:a.reason, quote:a.quote, path:a.path, src:"added", id:a.id}));
   return base.concat(mine).sort((x,y)=> x.date<y.date?-1:x.date>y.date?1:0);
 }
-const scored = () => allSpeeches().filter(s => s.final!=null);
+const BASIS={basis:"text"};
+const val = s => BASIS.basis==="text" ? s.text : s.final;
+const scored = () => allSpeeches().filter(s => val(s)!=null);
 function hawkSeries(win){
-  const sp = scored().map(x=>({t:ts(x.date),v:x.final})).sort((a,b)=>a.t-b.t), t0=sp[0].t, t1=Math.max(lastMk, sp[sp.length-1].t);
+  const sp = scored().map(x=>({t:ts(x.date),v:val(x)})).sort((a,b)=>a.t-b.t), t0=sp[0].t, t1=Math.max(lastMk, sp[sp.length-1].t);
   const out=[]; let hi=0,lo=0,sum=0;
   for(let t=t0;t<=t1;t+=DAY){ while(hi<sp.length&&sp[hi].t<=t){sum+=sp[hi].v;hi++;} while(lo<hi&&sp[lo].t<=t-win*DAY){sum-=sp[lo].v;lo++;} const n=hi-lo; out.push({t,v:n?sum/n:null,n}); }
   return out;
@@ -258,9 +267,9 @@ function tiles(){
   const sp = scored(), ls = sp[sp.length-1];
   const lbl = v => v>=1.5?"leans hawkish":v<=-1.5?"leans dovish":"near neutral";
   document.getElementById("tiles").innerHTML = `
-   <div class="tile"><div class="k">Index now (30-day average)</div><div class="v" style="color:${last.v>0?"var(--hawk)":"var(--dove)"}">${fmt(last.v)}</div><div class="s">${lbl(last.v)}, ${fdate(iso(last.t))}</div></div>
+   <div class="tile"><div class="k">Index now (30-day average${BASIS.basis==="text"?", text only":", combined"})</div><div class="v" style="color:${last.v>0?"var(--hawk)":"var(--dove)"}">${fmt(last.v)}</div><div class="s">${lbl(last.v)}, ${fdate(iso(last.t))}</div></div>
    <div class="tile"><div class="k">Change over 30 days</div><div class="v">${fmt(last.v-prev.v)}</div><div class="s">from ${fmt(prev.v)} on ${fdate(iso(prev.t))}</div></div>
-   <div class="tile"><div class="k">Latest scored speech</div><div class="v">${fmt(ls.final)}</div><div class="s">${esc(ls.speaker)}, ${fdate(ls.date)}</div></div>
+   <div class="tile"><div class="k">Latest scored speech</div><div class="v">${fmt(val(ls))}</div><div class="s">${esc(ls.speaker)}, ${fdate(ls.date)}</div></div>
    <div class="tile"><div class="k">Speeches in the index</div><div class="v">${sp.length}</div><div class="s">${added.length?added.length+" added here; ":""}since ${fdate(sp[0].date)}</div></div>`;
 }
 
@@ -276,11 +285,11 @@ function drawIndex(){
   const A=ASSET[state.asset];
   const cfg = {data:{datasets:[
       {type:"line",label:`Hawkishness, ${state.win}-day average`,data:hs.map(p=>({x:p.t,y:p.v})),borderColor:css("--hawk"),backgroundColor:css("--hawk"),borderWidth:2.4,pointRadius:0,yAxisID:"y",stepped:false},
-      {type:"scatter",label:"Single speech",data:sp.map(s=>({x:ts(s.date),y:s.final,s})),backgroundColor:sp.map(s=>s.src==="added"?css("--accent"):color(css("--hawk"),.28)),pointRadius:sp.map(s=>s.src==="added"?5:3.2),yAxisID:"y"},
+      {type:"scatter",label:"Single speech",data:sp.map(s=>({x:ts(s.date),y:val(s),s})),backgroundColor:sp.map(s=>s.src==="added"?css("--accent"):color(css("--hawk"),.28)),pointRadius:sp.map(s=>s.src==="added"?5:3.2),yAxisID:"y"},
       {type:"line",label:`${A.name}${state.mline==="ma"?", 30-day average":", daily close"} (right)`,data:mk,borderColor:css("--dove"),borderWidth:1.8,pointRadius:0,yAxisID:"y1"}]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:"nearest",intersect:false},
-      plugins:{legend:{labels:{color:css("--ink"),boxWidth:14}},tooltip:{callbacks:{label:c=>{ if(c.dataset.type==="scatter"){const s=c.raw.s; return `${s.speaker}: ${fmt(s.final)} (${fdate(s.date)})`;} return `${c.dataset.label}: ${c.parsed.y.toFixed(2)}`;},title:i=>i.length?fdate(iso(i[0].parsed.x)):""}}},
-      scales:{x:axisDate(hs[0].t,lastMk),y:{position:"left",min:-8,max:8,title:{display:true,text:"Score (−10 dovish, +10 hawkish)",color:css("--muted")},ticks:{color:css("--muted")},grid:{color:css("--line")}},
+      plugins:{legend:{labels:{color:css("--ink"),boxWidth:14}},tooltip:{callbacks:{label:c=>{ if(c.dataset.type==="scatter"){const s=c.raw.s; return `${s.speaker}: ${fmt(val(s))} (${fdate(s.date)})`;} return `${c.dataset.label}: ${c.parsed.y.toFixed(2)}`;},title:i=>i.length?fdate(iso(i[0].parsed.x)):""}}},
+      scales:{x:axisDate(hs[0].t,lastMk),y:{position:"left",min:-10,max:10,title:{display:true,text:"Score (−10 dovish, +10 hawkish)",color:css("--muted")},ticks:{color:css("--muted")},grid:{color:css("--line")}},
         y1:{position:"right",title:{display:true,text:A.name+(A.unit?" ("+A.unit+")":""),color:css("--muted")},ticks:{color:css("--muted")},grid:{display:false}}}}};
   if(c1) c1.destroy(); c1 = new Chart(document.getElementById("c1"), cfg);
   // co-movement
@@ -292,12 +301,30 @@ function drawIndex(){
   const mv = sp2.map(s=>({x:ts(s.date),y:dayMove(state.asset,ts(s.date))})).filter(p=>p.y!=null);
   const cfg2 = {data:{datasets:[
       {type:"bar",label:`${A.name}, change on the day (${A.move}, right)`,data:mv,backgroundColor:color(css("--dove"),.45),yAxisID:"y1",barThickness:4},
-      {type:"scatter",label:"Speech score (left)",data:sp2.map(s=>({x:ts(s.date),y:s.final,s})),backgroundColor:css("--hawk"),pointRadius:3.4,yAxisID:"y"}]},
+      {type:"scatter",label:"Speech score (left)",data:sp2.map(s=>({x:ts(s.date),y:val(s),s})),backgroundColor:css("--hawk"),pointRadius:3.4,yAxisID:"y"}]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{labels:{color:css("--ink"),boxWidth:14}},
-      tooltip:{callbacks:{title:i=>i.length?fdate(iso(i[0].parsed.x)):"",label:c=>c.dataset.type==="scatter"?`${c.raw.s.speaker}: ${fmt(c.raw.s.final)}`:`${A.name}: ${fmt(c.parsed.y,2)} ${A.move}`}}},
+      tooltip:{callbacks:{title:i=>i.length?fdate(iso(i[0].parsed.x)):"",label:c=>c.dataset.type==="scatter"?`${c.raw.s.speaker}: ${fmt(val(c.raw.s))}`:`${A.name}: ${fmt(c.parsed.y,2)} ${A.move}`}}},
       scales:{x:axisDate(hs[0].t-3*DAY,lastMk+3*DAY),y:{min:-10,max:10,ticks:{color:css("--muted")},grid:{color:css("--line")},title:{display:true,text:"Score",color:css("--muted")}},
         y1:{position:"right",ticks:{color:css("--muted")},grid:{display:false},title:{display:true,text:`Change on the day (${A.move})`,color:css("--muted")}}}}};
   if(c2) c2.destroy(); c2 = new Chart(document.getElementById("c2"), cfg2);
+}
+function benchmarks(){
+  const sp=allSpeeches().filter(s=>s.text!=null).sort((a,b)=>a.date<b.date?-1:1);
+  const prev={}; sp.forEach(s=>{ const p=prev[s.speaker]; s._chg = p==null?null:s.text-p; prev[s.speaker]=s.text; });
+  const rows=[
+    ["Headlines (how the press framed it)", s=>s.news, 1],
+    ["Market reaction, hour around the speech", s=>s.market, 1],
+    ["2-year yield, change on the day", s=>dayMove("y2",ts(s.date)), 1],
+    ["Dollar index, change on the day", s=>dayMove("dxy",ts(s.date)), 1],
+    ["S&P 500, change on the day (falling = hawkish)", s=>dayMove("spx",ts(s.date)), -1],
+    ["Change vs speaker’s previous speech → market reaction (hour)", s=>s.market, 1, true],
+    ["Change vs speaker’s previous speech → 2-year yield on the day", s=>dayMove("y2",ts(s.date)), 1, true]];
+  document.querySelector("#bench tbody").innerHTML = rows.map(([name,f,sign,useChg])=>{
+    const pr=sp.map(s=>[useChg?s._chg:s.text, f(s)]).filter(([x,y])=>x!=null&&y!=null&&!isNaN(y));
+    const nz=pr.filter(([x,y])=>x!==0&&y!==0), same=nz.length?nz.filter(([x,y])=>Math.sign(x)===Math.sign(sign*y)).length/nz.length:NaN;
+    const c=corr(pr);
+    return `<tr><td>${name}</td><td class="num">${pr.length}</td><td class="num">${isNaN(same)?"–":Math.round(same*100)+"%"}</td><td class="num">${isNaN(c)?"–":c.toFixed(2)}</td></tr>`;
+  }).join("");
 }
 function color(hex,a){ const m=hex.replace("#",""); if(m.length!==6) return hex; return `rgba(${parseInt(m.slice(0,2),16)},${parseInt(m.slice(2,4),16)},${parseInt(m.slice(4,6),16)},${a})`; }
 function corr(p){ if(p.length<3) return NaN; const n=p.length,mx=p.reduce((a,b)=>a+b[0],0)/n,my=p.reduce((a,b)=>a+b[1],0)/n; let sxy=0,sx=0,sy=0; for(const [x,y] of p){sxy+=(x-mx)*(y-my);sx+=(x-mx)**2;sy+=(y-my)**2;} return sxy/Math.sqrt(sx*sy); }
@@ -306,13 +333,13 @@ function corr(p){ if(p.length<3) return NaN; const n=p.length,mx=p.reduce((a,b)=
 const sortState={k:"date",dir:-1}; let openRow=null;
 function table(){
   const q=document.getElementById("q").value.toLowerCase(), fi=document.getElementById("finst").value, mp=document.getElementById("fmp").value;
-  let rows = allSpeeches().filter(s=>(mp==="all"||s.final!=null)&&(!fi||s.inst===fi)&&(!q||(s.speaker+" "+s.title).toLowerCase().includes(q)));
+  let rows = allSpeeches().filter(s=>(mp==="all"||s.final!=null||s.text!=null)&&(!fi||s.inst===fi)&&(!q||(s.speaker+" "+s.title).toLowerCase().includes(q)));
   rows.sort((a,b)=>{const k=sortState.k,x=a[k]??-99,y=b[k]??-99; return (x<y?-1:x>y?1:0)*sortState.dir;});
   const tb=document.querySelector("#tbl tbody"); const cell=v=>`<td class="num" style="color:${v==null?"var(--muted)":v>=1.5?"var(--hawk)":v<=-1.5?"var(--dove)":"var(--ink)"}">${fmt(v)}</td>`;
   tb.innerHTML = rows.map((s,i)=>{
     const key=s.date+"|"+s.title; const open = openRow===key;
     const title = s.url?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a>`:esc(s.title);
-    return `<tr class="row" data-key="${esc(key)}"><td style="white-space:nowrap">${fdate(s.date)}</td><td>${esc(s.speaker)}<div class="note">${esc(s.inst||"")}</div></td><td>${title}${s.src==="added"?'<span class="tag">Added here</span>':""}${s.final==null?'<span class="tag">Not about monetary policy</span>':""}</td>${cell(s.final)}${cell(s.text)}${cell(s.news)}${cell(s.market)}</tr>`+
+    return `<tr class="row" data-key="${esc(key)}"><td style="white-space:nowrap">${fdate(s.date)}</td><td>${esc(s.speaker)}<div class="note">${esc(s.inst||"")}</div></td><td>${title}${s.src==="added"?'<span class="tag">Added here</span>':""}${s.final==null?'<span class="tag">Not about monetary policy</span>':""}</td>${cell(s.text)}${cell(s.final)}${cell(s.news)}${cell(s.market)}</tr>`+
       (open?`<tr class="det"><td colspan="7">${s.path?`<div><b>Expected path:</b> ${esc(s.path)}</div>`:""}${s.reason?`<div><b>Why:</b> ${esc(s.reason)}</div>`:""}${s.quote?`<blockquote>${esc(s.quote)}</blockquote>`:""}${s.moves?`<div class="note">Market window: ${esc(s.moves)}</div>`:""}${s.absolute!=null?`<div class="note">Absolute stance (ignoring expectations): ${fmt(s.absolute,0)}</div>`:""}${s.src==="added"&&db?`<button class="ghost" data-del="${esc(s.id)}" type="button">Remove from index</button>`:""}</td></tr>`:"");
   }).join("");
   document.getElementById("tblnote").textContent = `${rows.length} shown.`;
@@ -449,11 +476,12 @@ function route(){ const v=VIEWS.includes(location.hash.slice(1))?location.hash.s
   VIEWS.forEach(x=>document.getElementById("v-"+x).classList.toggle("on",x===v));
   document.querySelectorAll("nav a").forEach(a=>a.toggleAttribute("aria-current",a.dataset.v===v)||a.dataset.v===v&&a.setAttribute("aria-current","page"));
   document.querySelectorAll("nav a").forEach(a=>{ if(a.dataset.v===v) a.setAttribute("aria-current","page"); else a.removeAttribute("aria-current"); });
-  if(v==="index") drawIndex(); }
+  if(v==="index"){ drawIndex(); benchmarks(); } }
 addEventListener("hashchange",route);
 document.getElementById("asset").addEventListener("change",e=>{state.asset=e.target.value;drawIndex();});
 document.getElementById("win").addEventListener("change",e=>{state.win=+e.target.value;drawIndex();});
 document.getElementById("rng").addEventListener("change",e=>{state.rng=e.target.value;drawIndex();});
+document.querySelectorAll("#basis button").forEach(b=>b.addEventListener("click",()=>{BASIS.basis=b.dataset.k;document.querySelectorAll("#basis button").forEach(x=>x.setAttribute("aria-pressed",x===b));tiles();drawIndex();}));
 document.querySelectorAll("#mline button").forEach(b=>b.addEventListener("click",()=>{state.mline=b.dataset.k;document.querySelectorAll("#mline button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawIndex();}));
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>route());
 new MutationObserver(()=>route()).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
