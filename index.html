@@ -104,10 +104,10 @@ a{color:var(--accent)}
 <section class="view" id="v-index">
   <div class="panel">
     <h2>Hawkishness index, headlines and markets</h2>
-    <p class="sub"><b>Index</b>: the speech-text scores of all Fed speeches in the chosen window, averaged. <b>Headlines</b>: how the press framed the same speeches, averaged the same way. Both use the −10 to +10 scale on the left. Pick a market tab to add the 2-year yield, the dollar index or the S&amp;P 500 on the right axis. “Each speech” shows the unsmoothed scores with the market’s move in the hour around each speech.</p>
+    <p class="sub"><b>Index</b>: the speech-text scores of all Fed speeches in the chosen window, averaged. <b>Headlines</b>: how the press framed the same speeches, averaged the same way. Both use the −10 to +10 scale on the left. Pick a market tab to add the 2-year yield, the dollar index or the S&amp;P 500 on the right axis. “Avg daily change” plots the market’s average daily change over the same window as the index. “Each speech” shows the unsmoothed scores with the market’s change on the day of each speech (previous close to close); the table below also compares the move in the hour around each speech.</p>
     <div class="controls">
       <label>Market<span class="seg" id="asset"><button type="button" data-k="y2" aria-pressed="true">US 2-year yield</button><button type="button" data-k="dxy" aria-pressed="false">Dollar index</button><button type="button" data-k="spx" aria-pressed="false">S&amp;P 500</button></span></label>
-      <label>Market line<span class="seg" id="mline"><button type="button" data-k="raw" aria-pressed="true">Daily close</button><button type="button" data-k="ma" aria-pressed="false">30-day average</button></span></label>
+      <label>Market line<span class="seg" id="mline"><button type="button" data-k="raw" aria-pressed="true">Daily close</button><button type="button" data-k="ma" aria-pressed="false">30-day average</button><button type="button" data-k="chg" aria-pressed="false">Avg daily change</button></span></label>
       <label>Index based on<span class="seg" id="basis"><button type="button" data-k="text" aria-pressed="true">Speech text only</button><button type="button" data-k="final" aria-pressed="false">Text + headlines + market</button></span></label>
       <label for="win">Hawkishness window<select id="win"><option value="14">14 days</option><option value="30" selected>30 days</option><option value="60">60 days</option></select></label>
       <label for="rng">Period<select id="rng"><option value="all" selected>All</option><option value="1825">Last 5 years</option><option value="365">Last 12 months</option><option value="180">Last 6 months</option><option value="90">Last 3 months</option></select></label>
@@ -241,6 +241,18 @@ function series(key){ // calendar-day arrays: last close carried forward, and 30
 }
 function closeOn(key,t){ const s=series(key), i=Math.round((t-s.t0)/DAY); return i<0?null:s.close[Math.min(i,s.close.length-1)]; }
 function maOn(key,t){ const s=series(key), i=Math.round((t-s.t0)/DAY); return i<0?null:s.ma[Math.min(i,s.ma.length-1)]; }
+const _chg={};
+function chgSeries(key){ // trading-day changes (bp for the yield, % for others) with running sums
+  if(_chg[key]) return _chg[key];
+  const t=[],c=[],pre=[0]; let prev=null;
+  for(let i=0;i<MK.t.length;i++){ const v=MK[key][i]; if(v==null) continue; if(prev!=null){ const d= key==="y2"?(v-prev)*100:(v/prev-1)*100; t.push(MK.t[i]); c.push(d); pre.push(pre[pre.length-1]+d);} prev=v; }
+  return _chg[key]={t,c,pre};
+}
+function chgMA(key,t,win){ // average daily change over trading days in (t-win days, t]
+  const s=chgSeries(key); const ub=x=>{let lo=0,hi=s.t.length;while(lo<hi){const m=(lo+hi)>>1; if(s.t[m]<=x) lo=m+1; else hi=m;} return lo;};
+  const b=ub(t), a=ub(t-win*DAY); return b>a ? (s.pre[b]-s.pre[a])/(b-a) : null;
+}
+function mkVal(key,t){ return state.mline==="raw"?closeOn(key,t):state.mline==="ma"?maOn(key,t):chgMA(key,t,state.win); }
 function dayMove(key, t){ // previous close -> close on the date (or next trading day)
   let b=null,a=null; for(let i=0;i<MK.t.length;i++){ const v=MK[key][i]; if(v==null) continue; if(MK.t[i]<t) b=v; else if(a==null) {a=v;} }
   if(a==null||b==null) return null; return key==="y2" ? (a-b)*100 : (a/b-1)*100;
@@ -285,7 +297,7 @@ function drawIndex(){
   const mk = []; for(let t=hs[0].t;t<=lastMk;t+=DAY){ const v= state.mline==="raw"?closeOn(state.asset,t):maOn(state.asset,t); if(v!=null) mk.push({x:t,y:v}); }
   const A=ASSET[state.asset];
   // co-movement
-  const pairs = hs.map(p=>[p.v, state.mline==="raw"?closeOn(state.asset,p.t):maOn(state.asset,p.t)]).filter(p=>p[1]!=null);
+  const pairs = hs.map(p=>[p.v, mkVal(state.asset,p.t)]).filter(p=>p[1]!=null);
   const wk = []; for(let i=7;i<hs.length;i+=7){ const a=hs[i],b=hs[i-7]; const ma=closeOn(state.asset,a.t), mb=closeOn(state.asset,b.t); if(ma!=null&&mb!=null) wk.push([a.v-b.v, ma-mb]); }
   document.getElementById("stats1").innerHTML = `<span>Co-movement of the index and market lines: <b>${corr(pairs).toFixed(2)}</b></span><span>of weekly changes: <b>${corr(wk).toFixed(2)}</b></span><span>${A.name} ${fdate(iso(hs[0].t))}: <b>${(closeOn(state.asset,hs[0].t)||0).toFixed(2)}</b> → ${fdate(iso(lastMk))}: <b>${(closeOn(state.asset,lastMk)||0).toFixed(2)}</b></span>`;
   // chart 2
@@ -316,11 +328,11 @@ function drawCompare(){
   if(CMP.view==="each"){
     box.style.minWidth = (sp.length*26)+"px";
     const lab = sp.map(s=>[new Date(ts(s.date)).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"2-digit",timeZone:"UTC"}), s.speaker.replace("Pro Tempore ","").split(" ").pop()]);
-    const mv = sp.map(s=>hourMove(s,k)), mx=Math.max(1e-9,...mv.filter(v=>v!=null).map(Math.abs));
+    const mv = sp.map(s=>dayMove(k,ts(s.date))), mx=Math.max(1e-9,...mv.filter(v=>v!=null).map(Math.abs));
     cfg={type:"bar",data:{labels:lab,datasets:[
         {label:"Speech text",data:sp.map(val),backgroundColor:css("--accent"),yAxisID:"y",categoryPercentage:.8,barPercentage:.9},
         {label:"Headlines",data:sp.map(s=>s.news),backgroundColor:css("--warn"),yAxisID:"y",categoryPercentage:.8,barPercentage:.9},
-        {label:`${A.name}, move in the hour around the speech (${A.move}, right)`,data:mv,backgroundColor:css("--ok"),yAxisID:"y1",categoryPercentage:.8,barPercentage:.9}]},
+        {label:`${A.name}, change on the day (previous close to close, ${A.move}, right)`,data:mv,backgroundColor:css("--ok"),yAxisID:"y1",categoryPercentage:.8,barPercentage:.9}]},
       options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:"index",intersect:false},
         plugins:{legend:{labels:{color:css("--ink"),boxWidth:14}},tooltip:{callbacks:{title:i=>{const s=sp[i[0].dataIndex];return `${s.speaker}, ${fdate(s.date)}`;},afterTitle:i=>sp[i[0].dataIndex].title,
           label:c=>c.dataset.yAxisID==="y1"?`${A.name}: ${c.parsed.y==null?"not available":fmt(c.parsed.y,2)+" "+A.move}`:`${c.dataset.label}: ${c.parsed.y==null?"not available":fmt(c.parsed.y)}`}}},
@@ -330,23 +342,28 @@ function drawCompare(){
     box.style.minWidth="0";
     const hi=hawkSeries(state.win).filter(p=>p.v!=null&&p.t>=cut), t0=hi[0].t;
     const hn=hawkSeries(state.win,s=>s.text!=null?s.news:null).filter(p=>p.v!=null&&p.t>=t0);
-    const mk=[]; for(let t=t0;t<=lastMk;t+=DAY){ const v=state.mline==="raw"?closeOn(k,t):maOn(k,t); if(v!=null) mk.push({x:t,y:v}); }
+    const mk=[]; for(let t=t0;t<=lastMk;t+=DAY){ const v=mkVal(k,t); if(v!=null) mk.push({x:t,y:v}); }
     cfg={type:"line",data:{datasets:[
         {label:`${idxName}, ${state.win}-day average`,data:hi.map(p=>({x:p.t,y:p.v})),borderColor:css("--accent"),backgroundColor:css("--accent"),borderWidth:2.4,pointRadius:0,yAxisID:"y"},
         {label:`Headlines, ${state.win}-day average`,data:hn.map(p=>({x:p.t,y:p.v})),borderColor:css("--warn"),backgroundColor:css("--warn"),borderWidth:2.2,pointRadius:0,yAxisID:"y"},
-        {label:`${A.name}${state.mline==="ma"?", 30-day average":", daily close"} (right)`,data:mk,borderColor:css("--ok"),backgroundColor:css("--ok"),borderWidth:1.8,pointRadius:0,yAxisID:"y1"}]},
+        {label:`${A.name}${state.mline==="ma"?", 30-day average":state.mline==="chg"?`, average daily change over ${state.win} days (${A.move})`:", daily close"} (right)`,data:mk,borderColor:css("--ok"),backgroundColor:css("--ok"),borderWidth:1.8,pointRadius:0,yAxisID:"y1"}]},
       options:{responsive:true,maintainAspectRatio:false,animation:false,interaction:{mode:"nearest",axis:"x",intersect:false},
         plugins:{legend:{labels:{color:css("--ink"),boxWidth:14}},tooltip:{callbacks:{title:i=>i.length?fdate(iso(i[0].parsed.x)):"",label:c=>`${c.dataset.label}: ${fmt(c.parsed.y,2)}`}}},
-        scales:{x:axisDate(t0,lastMk),y:yL,y1:{position:"right",ticks:{color:css("--ok")},grid:{display:false},title:{display:true,text:A.name+(A.unit?" ("+A.unit+")":""),color:css("--muted")}}}}};
+        scales:{x:axisDate(t0,lastMk),y:yL,y1:{position:"right",ticks:{color:css("--ok")},grid:{display:false},title:{display:true,text:state.mline==="chg"?`${A.name}: avg daily change (${A.move})${k==="spx"?", falling = hawkish":""}`:A.name+(A.unit?" ("+A.unit+")":""),color:css("--muted")}}}}};
   }
   if(c3) c3.destroy(); c3=new Chart(document.getElementById("c3"),cfg);
-  const F=[["Speech text",val,1],["Headlines",s=>s.news,1],[`${A.name} (hour around the speech${k==="spx"?", falling = hawkish":""})`,s=>hourMove(s,k),ASIGN[k]]];
-  document.querySelector("#agree tbody").innerHTML = [[0,1],[0,2],[1,2]].map(([a,b])=>{
+  const F=[["Speech text",val,1],["Headlines",s=>s.news,1],[`${A.name} (hour around the speech${k==="spx"?", falling = hawkish":""})`,s=>hourMove(s,k),ASIGN[k]],[`${A.name} (change on the day${k==="spx"?", falling = hawkish":""})`,s=>dayMove(k,ts(s.date)),ASIGN[k]]];
+  document.querySelector("#agree tbody").innerHTML = [[0,1],[0,2],[0,3],[1,2],[1,3]].map(([a,b])=>{
     const pr=sp.map(s=>[F[a][1](s),F[b][1](s)]).filter(([x,y])=>x!=null&&y!=null);
     const nz=pr.filter(([x,y])=>x!==0&&y!==0), same=nz.length?nz.filter(([x,y])=>Math.sign(x)===Math.sign(F[b][2]*y)).length/nz.length:NaN;
     const c=corr(pr)*F[b][2], gap=b<2&&pr.length?pr.reduce((t,[x,y])=>t+x-y,0)/pr.length:NaN;
     return `<tr><td>${F[a][0]} vs ${b===1?"headlines":F[b][0]}</td><td class="num">${pr.length}</td><td class="num">${isNaN(same)?"–":Math.round(same*100)+"%"}</td><td class="num">${isNaN(c)?"–":c.toFixed(2)}</td><td class="num">${isNaN(gap)?"–":(gap>0?"+":"")+gap.toFixed(1)}</td></tr>`;
-  }).join("") + `<tr><td colspan="5" class="note">Pairs use the unsmoothed speech scores in the chosen period. Same direction counts speeches where both are non-zero${k==="spx"?" (stocks falling counts as hawkish)":""}. Average gap = first score minus second, for the two scores on the same scale (positive means the first reads more hawkish).</td></tr>`;
+  }).join("") + (()=>{ const cut2 = state.rng==="all" ? -Infinity : lastMk - (+state.rng)*DAY;
+      const hi=hawkSeries(state.win).filter(p=>p.v!=null&&p.t>=cut2);
+      const rows=[["level (daily close)",t=>closeOn(k,t)],["level (30-day average)",t=>maOn(k,t)],[`average daily change over ${state.win} days`,t=>chgMA(k,t,state.win)]].map(([nm,f])=>{
+        const pr=hi.map(p=>[p.v,f(p.t)]).filter(x=>x[1]!=null); const c=corr(pr)*(nm.startsWith("average")?ASIGN[k]:1);
+        return `<tr><td>Index (${state.win}-day average) vs ${A.name} ${nm}</td><td class="num">${pr.length} days</td><td class="num">–</td><td class="num">${isNaN(c)?"–":c.toFixed(2)}</td><td class="num">–</td></tr>`; }).join("");
+      return rows; })() + `<tr><td colspan="5" class="note">Pairs use the unsmoothed speech scores in the chosen period. Same direction counts speeches where both are non-zero${k==="spx"?" (stocks falling counts as hawkish)":""}. Average gap = first score minus second, for the two scores on the same scale (positive means the first reads more hawkish).</td></tr>`;
 }
 function benchmarks(){
   const sp=allSpeeches().filter(s=>s.text!=null).sort((a,b)=>a.date<b.date?-1:1);
