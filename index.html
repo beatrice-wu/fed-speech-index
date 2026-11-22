@@ -120,6 +120,7 @@ a{color:var(--accent)}
   <div class="panel">
     <h2>Each speech and the market move that day</h2>
     <p class="sub">No smoothing. Dots: each speech’s score. Bars: the market chosen above, its change from the previous close to the close on the day of the speech (basis points for the yield, % for the others).</p>
+    <div class="controls"><label for="rng2">Period<select id="rng2"><option value="all" selected>All</option><option value="1825">Last 5 years</option><option value="365">Last 12 months</option><option value="180">Last 6 months</option><option value="90">Last 3 months</option></select></label></div>
     <div class="chartbox sm"><canvas id="c2" aria-label="Speech scores and same-day market moves"></canvas></div>
   </div>
   <div class="panel" id="bench-panel">
@@ -289,8 +290,8 @@ function tiles(){
 }
 
 /* ---------- charts ---------- */
-let c2=null; const state={asset:"y2",mline:"raw",win:30,rng:"all"};
-function axisDate(min,max){ return {type:"linear",min,max,ticks:{color:css("--muted"),maxRotation:0,callback:v=>new Date(v).toLocaleDateString("en-GB",{month:"short",year:"2-digit",timeZone:"UTC"})},grid:{color:css("--line")}}; }
+let c2=null; const state={rng2:"all",asset:"y2",mline:"raw",win:30,rng:"all"};
+function axisDate(min,max){ const short=(max-min)<400*DAY; return {type:"linear",min,max,ticks:{color:css("--muted"),maxRotation:0,callback:v=>new Date(v).toLocaleDateString("en-GB",short?{day:"numeric",month:"short",timeZone:"UTC"}:{month:"short",year:"2-digit",timeZone:"UTC"})},grid:{color:css("--line")}}; }
 function drawIndex(){
   if(!window.Chart) return;
   const h = hawkSeries(state.win), cut = state.rng==="all" ? -Infinity : lastMk - (+state.rng)*DAY;
@@ -304,14 +305,16 @@ function drawIndex(){
   const wk = []; for(let i=7;i<hs.length;i+=7){ const a=hs[i],b=hs[i-7]; const ma=closeOn(state.asset,a.t), mb=closeOn(state.asset,b.t); if(ma!=null&&mb!=null) wk.push([a.v-b.v, ma-mb]); }
   document.getElementById("stats1").innerHTML = `<span>Co-movement of the index and market lines: <b>${corr(pairs).toFixed(2)}</b></span><span>of weekly changes: <b>${corr(wk).toFixed(2)}</b></span><span>${A.name} ${fdate(iso(hs[0].t))}: <b>${(closeOn(state.asset,hs[0].t)||0).toFixed(2)}</b> → ${fdate(iso(lastMk))}: <b>${(closeOn(state.asset,lastMk)||0).toFixed(2)}</b></span>`;
   // chart 2
-  const sp2 = sp.filter(s=>ts(s.date)<=lastMk);
+  const cutB = state.rng2==="all" ? -Infinity : lastMk - (+state.rng2)*DAY;
+  const sp2 = scored().filter(s=>ts(s.date)>=cutB && ts(s.date)<=lastMk);
+  const x0 = sp2.length ? ts(sp2[0].date) : lastMk - 30*DAY;
   const mv = sp2.map(s=>({x:ts(s.date),y:dayMove(state.asset,ts(s.date))})).filter(p=>p.y!=null);
   const cfg2 = {data:{datasets:[
       {type:"bar",label:`${A.name}, change on the day (${A.move}, right)`,data:mv,backgroundColor:color(css("--dove"),.45),yAxisID:"y1",barThickness:4},
       {type:"scatter",label:"Speech score (left)",data:sp2.map(s=>({x:ts(s.date),y:val(s),s})),backgroundColor:css("--hawk"),pointRadius:3.4,yAxisID:"y"}]},
     options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{labels:{color:css("--ink"),boxWidth:14}},
       tooltip:{callbacks:{title:i=>i.length?fdate(iso(i[0].parsed.x)):"",label:c=>c.dataset.type==="scatter"?`${c.raw.s.speaker}: ${fmt(val(c.raw.s))}`:`${A.name}: ${fmt(c.parsed.y,2)} ${A.move}`}}},
-      scales:{x:axisDate(hs[0].t-3*DAY,lastMk+3*DAY),y:{min:-10,max:10,ticks:{color:css("--muted")},grid:{color:css("--line")},title:{display:true,text:"Score",color:css("--muted")}},
+      scales:{x:axisDate(x0-3*DAY,lastMk+3*DAY),y:{min:-10,max:10,ticks:{color:css("--muted")},grid:{color:css("--line")},title:{display:true,text:"Score",color:css("--muted")}},
         y1:{position:"right",ticks:{color:css("--muted")},grid:{display:false},title:{display:true,text:`Change on the day (${A.move})`,color:css("--muted")}}}}};
   if(c2) c2.destroy(); c2 = new Chart(document.getElementById("c2"), cfg2);
   drawCompare();
@@ -544,6 +547,7 @@ addEventListener("hashchange",route);
 document.querySelectorAll("#asset button").forEach(b=>b.addEventListener("click",()=>{state.asset=b.dataset.k;document.querySelectorAll("#asset button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawIndex();}));
 document.getElementById("win").addEventListener("change",e=>{state.win=+e.target.value;drawIndex();});
 document.getElementById("rng").addEventListener("change",e=>{state.rng=e.target.value;drawIndex();});
+document.getElementById("rng2").addEventListener("change",e=>{state.rng2=e.target.value;drawIndex();});
 document.querySelectorAll("#basis button").forEach(b=>b.addEventListener("click",()=>{BASIS.basis=b.dataset.k;document.querySelectorAll("#basis button").forEach(x=>x.setAttribute("aria-pressed",x===b));tiles();drawIndex();}));
 document.querySelectorAll("#mline button").forEach(b=>b.addEventListener("click",()=>{state.mline=b.dataset.k;document.querySelectorAll("#mline button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawIndex();}));
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>route());
