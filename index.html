@@ -308,6 +308,7 @@ function drawIndex(){
   const cutB = state.rng2==="all" ? -Infinity : lastMk - (+state.rng2)*DAY;
   const sp2 = scored().filter(s=>ts(s.date)>=cutB && ts(s.date)<=lastMk);
   const x0 = sp2.length ? ts(sp2[0].date) : lastMk - 30*DAY;
+  const mvMax = Math.max(1e-6, ...sp2.map(s=>Math.abs(dayMove(state.asset,ts(s.date))||0))) * 1.05;
   const mv = sp2.map(s=>({x:ts(s.date),y:dayMove(state.asset,ts(s.date))})).filter(p=>p.y!=null);
   const cfg2 = {data:{datasets:[
       {type:"bar",label:`${A.name}, change on the day (${A.move}, right)`,data:mv,backgroundColor:color(css("--dove"),.45),yAxisID:"y1",barThickness:4},
@@ -315,7 +316,7 @@ function drawIndex(){
     options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{labels:{color:css("--ink"),boxWidth:14}},
       tooltip:{callbacks:{title:i=>i.length?fdate(iso(i[0].parsed.x)):"",label:c=>c.dataset.type==="scatter"?`${c.raw.s.speaker}: ${fmt(val(c.raw.s))}`:`${A.name}: ${fmt(c.parsed.y,2)} ${A.move}`}}},
       scales:{x:axisDate(x0-3*DAY,lastMk+3*DAY),y:{min:-10,max:10,ticks:{color:css("--muted")},grid:{color:css("--line")},title:{display:true,text:"Score",color:css("--muted")}},
-        y1:{position:"right",ticks:{color:css("--muted")},grid:{display:false},title:{display:true,text:`Change on the day (${A.move})`,color:css("--muted")}}}}};
+        y1:{position:"right",min:-mvMax,max:mvMax,ticks:{color:css("--muted")},grid:{display:false},title:{display:true,text:`Change on the day (${A.move})`,color:css("--muted")}}}}};
   if(c2) c2.destroy(); c2 = new Chart(document.getElementById("c2"), cfg2);
   drawCompare();
 }
